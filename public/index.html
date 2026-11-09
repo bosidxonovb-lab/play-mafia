@@ -1,0 +1,230 @@
+<!DOCTYPE html>
+<html lang="uz">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>PLAY MAFIA</title>
+<style>
+*{box-sizing:border-box}
+body{
+ margin:0;background:#101018;color:white;
+ font-family:Arial,sans-serif;text-align:center;
+}
+header{padding:24px;background:#191923;border-bottom:2px solid #a52838}
+h1{color:#f04455;letter-spacing:4px}
+main{max-width:500px;margin:20px auto;padding:15px}
+.panel{background:#20202c;padding:20px;border-radius:15px;margin:15px 0}
+input,button{
+ width:100%;padding:14px;margin:7px 0;
+ border:0;border-radius:9px;font-size:16px;
+}
+input{background:#30303d;color:white}
+button{background:#b92e40;color:white;font-weight:bold}
+button:disabled{opacity:.5}
+.player{
+ background:#30303d;padding:13px;margin:7px 0;
+ border-radius:9px;display:flex;justify-content:space-between;
+ align-items:center;gap:8px
+}
+.player button{width:auto;padding:9px;margin:0}
+#game{display:none}
+#notice{color:#ffc65c;white-space:pre-line}
+#role{font-size:25px;color:#ff596b}
+#timer{font-size:45px;color:#ff596b}
+.small{color:#aaa;font-size:13px}
+</style>
+</head>
+<body>
+<header>
+<h1>PLAY MAFIA</h1>
+<p>Haqiqiy onlayn Mafia o‘yini</p>
+</header>
+
+<main>
+<section id="lobby">
+<div class="panel">
+<h2>O‘yinchi nomi</h2>
+<input id="name" maxlength="20" placeholder="Ismingiz">
+<button onclick="createRoom()">XONA YARATISH</button>
+<hr>
+<input id="roomCode" placeholder="Xona kodi">
+<button onclick="joinRoom()">XONAGA QO‘SHILISH</button>
+<p id="error"></p>
+</div>
+</section>
+
+<section id="game">
+<div class="panel">
+<h2>PLAY MAFIA</h2>
+<p>Xona kodi: <b id="code"></b></p>
+<button onclick="copyCode()">KODNI NUSXALASH</button>
+<p id="phase">Kutilyapti...</p>
+<div id="timer">00:00</div>
+<p id="day"></p>
+</div>
+
+<div class="panel">
+<h3>SIZNING ROLINGIZ</h3>
+<p id="role">Hali tarqatilmadi</p>
+<p id="notice"></p>
+</div>
+
+<div class="panel">
+<h3>O‘YINCHILAR</h3>
+<div id="players"></div>
+</div>
+
+<div class="panel">
+<button id="start" onclick="startGame()" style="display:none">
+O‘YINNI BOSHLASH
+</button>
+</div>
+
+<div class="panel">
+<h3>XABARLAR</h3>
+<div id="messages">O‘yin boshlanishi kutilmoqda.</div>
+</div>
+</section>
+</main>
+
+<script src="/socket.io/socket.io.js"></script>
+<script>
+const socket=io();
+let roomCode="";
+let myRole="";
+let currentPhase="lobby";
+let players=[];
+
+function nameValue(){
+ return document.getElementById("name").value.trim();
+}
+
+function createRoom(){
+ if(!nameValue()) return alert("Ismingizni yozing!");
+ socket.emit("create",nameValue());
+}
+
+function joinRoom(){
+ if(!nameValue()) return alert("Ismingizni yozing!");
+ socket.emit("join",{
+  name:nameValue(),
+  code:document.getElementById("roomCode").value.trim()
+ });
+}
+
+function startGame(){
+ socket.emit("start");
+}
+
+function copyCode(){
+ navigator.clipboard.writeText(roomCode);
+ alert("Xona kodi nusxalandi!");
+}
+
+function addMessage(message){
+ const box=document.getElementById("messages");
+ const p=document.createElement("p");
+ p.textContent=message;
+ box.prepend(p);
+}
+
+socket.on("joined",code=>{
+ roomCode=code;
+ document.getElementById("code").textContent=code;
+ document.getElementById("lobby").style.display="none";
+ document.getElementById("game").style.display="block";
+});
+
+socket.on("notice",data=>{
+ if(data.type==="role"){
+  myRole=data.role;
+  document.getElementById("role").textContent=myRole;
+  addMessage("Sizning rolingiz: "+myRole);
+ }else if(data.type==="error"){
+  document.getElementById("error").textContent=data.text;
+ }else if(data.type==="success"){
+  document.getElementById("notice").textContent=data.text;
+ }else if(data.type==="team"){
+  document.getElementById("notice").textContent=
+   "Jamoangiz: "+data.players.join(", ");
+ }else if(data.type==="allroles"){
+  document.getElementById("notice").textContent=
+   "Hamma rollar: "+data.players.map(p=>p.name+" — "+p.role).join("; ");
+ }else if(data.type==="watch"){
+  document.getElementById("notice").textContent=
+   data.target+" uyiga kelganlar: "+
+   (data.visitors.length ? data.visitors.join(", ") : "Hech kim");
+ } 
+});
+
+socket.on("state",data=>{
+ players=data.players;
+ document.getElementById("start").style.display=
+  data.started || !players.some(p=>p.host) ? "none":"block";
+
+ const box=document.getElementById("players");
+ box.innerHTML="";
+
+ players.forEach(p=>{
+  const div=document.createElement("div");
+  div.className="player";
+
+  const label=document.createElement("span");
+  label.textContent=p.name+(p.alive?"":" (O‘yindan chiqdi)");
+  div.appendChild(label);
+
+  const canAct=p.alive && data.started &&
+   (data.phase==="day" || (
+    data.phase==="night" &&
+    ["Mafia","Mafiyaboshi","Hufya","Hamsoya"].includes(myRole)
+   ));
+
+  if(canAct && p.alive){
+   const btn=document.createElement("button");
+   btn.textContent=data.phase==="day"?"OVOZ":"TANLASH";
+   btn.disabled=p.name===nameValue();
+   btn.onclick=()=>{
+    const target=players.find(x=>x.name===p.name);
+    if(data.phase==="day") socket.emit("vote",target.id);
+    else socket.emit("action",target.id);
+   };
+   div.appendChild(btn);
+  }
+  box.appendChild(div);
+ });
+
+ if(data.phase==="lobby") {
+  document.getElementById("phase").textContent="Xona kutish zalida";
+ }
+});
+
+socket.on("phase",data=>{
+ currentPhase=data.phase;
+ document.getElementById("phase").textContent=
+  data.phase==="night"?"🌙 TUN":"☀️ KUN";
+ document.getElementById("day").textContent="Kun: "+data.day;
+ document.getElementById("notice").textContent="";
+ addMessage(data.phase==="night"?"Tun boshlandi.":"Kun boshlandi.");
+});
+
+socket.on("tick",time=>{
+ document.getElementById("timer").textContent=
+  "00:"+String(time).padStart(2,"0");
+});
+
+socket.on("announcement",message=>{
+ addMessage(message);
+});
+
+socket.on("finished",data=>{
+ document.getElementById("phase").textContent="O‘YIN TUGADI";
+ document.getElementById("timer").textContent="🏆";
+ addMessage("G‘OLIB: "+data.winner);
+ data.players.forEach(p=>{
+  addMessage(p.name+" — "+p.role+
+   (p.alive?" (tirik)":" (chiqqan)"));
+ });
+});
+</script>
+</body>
+</html>
